@@ -144,6 +144,7 @@ def parse_hours(hours_text: str) -> dict:
         
         # Check if this is a day name
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        day_found = False
         for day in days:
             if line.startswith(day):
                 current_day = day
