@@ -152,10 +152,11 @@ def parse_hours(hours_text: str) -> dict:
                 hours_part = line.replace(day, '').strip()
                 if hours_part:
                     hours_dict[day] = hours_part
+                day_found = True
                 break
         
         # If not a day line and we have a current day, it might be hours continuation
-        elif current_day and line:
+        if not day_found and current_day and line:
             hours_dict[current_day] = line
     
     return hours_dict
