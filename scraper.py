@@ -36,6 +36,9 @@ class GoogleMapsScraper:
             'extra_http_headers': {
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
             }
         }
         
@@ -44,11 +47,35 @@ class GoogleMapsScraper:
         
         self.context = await self.browser.new_context(**context_options)
         
-        # Add initialization script to hide automation
+        # Add comprehensive stealth scripts
         await self.context.add_init_script("""
+            // Hide webdriver
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
             });
+            
+            // Override the `plugins` property to use a custom getter.
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+            
+            // Override the `languages` property to use a custom getter.
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
+            
+            // Override chrome property
+            window.chrome = {
+                runtime: {}
+            };
+            
+            // Override permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
         """)
         
         self.page = await self.context.new_page()
