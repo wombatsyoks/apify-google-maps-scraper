@@ -275,6 +275,52 @@ class GoogleMapsScraper:
             logger.error(f"Error extracting business cards: {e}")
             return businesses
     
+    async def deep_scrape_businesses(self, businesses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Click into each business to extract detailed information
+        
+        Args:
+            businesses: List of basic business data
+            
+        Returns:
+            List of businesses with detailed data
+        """
+        detailed_businesses = []
+        
+        for i, business in enumerate(businesses):
+            try:
+                url = business.get('url')
+                if not url:
+                    detailed_businesses.append(business)
+                    continue
+                
+                logger.info(f"Deep scraping {i+1}/{len(businesses)}: {business.get('title', 'Unknown')}")
+                
+                # Navigate to business page
+                await self.page.goto(url, wait_until='domcontentloaded', timeout=15000)
+                await random_delay(2, 3)
+                
+                # Extract detailed info
+                detailed_data = await self.parser.parse_business_details()
+                
+                # Merge with existing data (detailed data takes priority)
+                merged_data = {**business, **detailed_data}
+                detailed_businesses.append(merged_data)
+                
+                if (i + 1) % 5 == 0:
+                    logger.info(f"Deep scraped {i+1}/{len(businesses)} businesses...")
+                
+                # Small delay between businesses
+                await self.page.wait_for_timeout(500)
+                
+            except Exception as e:
+                logger.warning(f"Failed to deep scrape {business.get('title', 'Unknown')}: {e}")
+                # Keep the basic data if deep scrape fails
+                detailed_businesses.append(business)
+        
+        logger.info(f"Deep scraping completed for {len(detailed_businesses)} businesses")
+        return detailed_businesses
+    
     async def scrape(
         self, 
         query: str, 
@@ -310,12 +356,12 @@ class GoogleMapsScraper:
             # Extract business data
             businesses = await self.extract_business_cards(max_results)
             
+            logger.info(f"Total businesses found in cards: {len(businesses)}")
+            
             # Deep scrape if requested (click into each business)
             if deep_scrape and businesses:
-                logger.info("Deep scraping enabled - extracting detailed info...")
-                # This would require clicking each business card
-                # Skipping for V1 to keep it simple and fast
-                pass
+                logger.info(f"Deep scraping enabled - extracting detailed info for {len(businesses)} businesses...")
+                businesses = await self.deep_scrape_businesses(businesses)
             
             return businesses
             
