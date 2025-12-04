@@ -36,57 +36,105 @@ class GoogleMapsParser:
             # Get the link element which contains most basic info
             link = await card.query_selector('a')
             if not link:
+                logger.debug("No link found in card")
                 return None
             
-            # Business name
-            name_elem = await link.query_selector('[class*="fontHeadlineSmall"]')
-            if name_elem:
-                data['title'] = await name_elem.inner_text()
-            else:
-                return None  # Skip if no name
+            # Get all text content for debugging
+            card_text = await card.inner_text()
+            logger.debug(f"Card text: {card_text[:100]}...")
             
-            # Rating
+            # Business name - try multiple selectors
+            name_selectors = [
+                '[class*="fontHeadlineSmall"]',
+                '[class*="fontHeadline"]',
+                'div[class*="font"] div:first-child',
+                'a div:first-child',
+            ]
+            
+            name_text = None
+            for selector in name_selectors:
+                try:
+                    name_elem = await link.query_selector(selector)
+                    if name_elem:
+                        name_text = await name_elem.inner_text()
+                        if name_text and name_text.strip():
+                            data['title'] = name_text.strip()
+                            logger.debug(f"Found name with {selector}: {data['title']}")
+                            break
+                except:
+                    continue
+            
+            # If no name found with selectors, try getting first div text
+            if 'title' not in data:
+                # Try to extract name from card text (usually first line)
+                lines = card_text.split('\n')
+                if lines:
+                    potential_name = lines[0].strip()
+                    # Check if it looks like a business name (not a rating or review count)
+                    if potential_name and not potential_name[0].isdigit() and '★' not in potential_name:
+                        data['title'] = potential_name
+                        logger.debug(f"Extracted name from text: {data['title']}")
+            
+            if 'title' not in data:
+                logger.debug("Could not find business name, skipping card")
+                return None
+            
+            # Rating - look for star rating
             rating_elem = await card.query_selector('span[role="img"]')
             if rating_elem:
                 aria_label = await rating_elem.get_attribute('aria-label')
-                data['rating'] = extract_rating(aria_label)
+                if aria_label:
+                    data['rating'] = extract_rating(aria_label)
+                    logger.debug(f"Found rating: {data.get('rating')}")
             
-            # Reviews count
-            reviews_elem = await card.query_selector('span[aria-label*="review"]')
-            if reviews_elem:
-                reviews_text = await reviews_elem.inner_text()
-                data['reviewsCount'] = extract_reviews_count(reviews_text)
+            # Reviews count - look for text with numbers and "reviews"
+            card_html = await card.inner_html()
+            if 'review' in card_text.lower():
+                data['reviewsCount'] = extract_reviews_count(card_text)
+                logger.debug(f"Found reviews count: {data.get('reviewsCount')}")
             
-            # Category
-            category_elem = await card.query_selector('[class*="fontBodyMedium"] > span')
-            if category_elem:
-                category_text = await category_elem.inner_text()
-                # Category is usually like "Coffee shop · $$ · Open now"
-                parts = category_text.split('·')
-                if parts:
-                    data['category'] = parts[0].strip()
+            # Category and other info from text
+            lines = card_text.split('\n')
+            for line in lines[1:]:  # Skip first line (name)
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Category (usually contains words, not numbers)
+                if 'category' not in data and '·' in line:
+                    parts = line.split('·')
+                    if parts:
+                        category = parts[0].strip()
+                        if category and not category[0].isdigit():
+                            data['category'] = category
+                            logger.debug(f"Found category: {category}")
                 
-                # Price level
-                for part in parts:
-                    part = part.strip()
-                    if '$' in part:
-                        data['priceLevel'] = part
+                # Price level (contains $)
+                if '$' in line and 'priceLevel' not in data:
+                    # Extract just the $ symbols
+                    price_part = next((part.strip() for part in line.split('·') if '$' in part), None)
+                    if price_part:
+                        data['priceLevel'] = price_part
+                        logger.debug(f"Found price level: {price_part}")
             
             # Get URL for place ID
             href = await link.get_attribute('href')
             if href:
                 data['url'] = f"https://www.google.com{href}" if href.startswith('/') else href
                 data['placeId'] = extract_place_id(data['url'])
+                logger.debug(f"Found URL: {data['url']}")
                 
                 # Try to get coordinates from URL
                 coords = extract_coordinates_from_url(data['url'])
                 if coords:
                     data['coordinates'] = coords
+                    logger.debug(f"Found coordinates: {coords}")
             
+            logger.info(f"Successfully parsed: {data.get('title', 'Unknown')}")
             return data
             
         except Exception as e:
-            logger.error(f"Error parsing business card: {e}")
+            logger.error(f"Error parsing business card: {e}", exc_info=True)
             return None
     
     async def parse_business_details(self, deep_scrape: bool = False) -> Dict[str, Any]:
