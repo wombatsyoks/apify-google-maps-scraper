@@ -52,7 +52,7 @@ async def main():
             proxy_url = await Actor.create_proxy_configuration()
             if proxy_url:
                 playwright_proxy = {
-                    'server': proxy_url.get_proxy_url(),
+                    'server': await proxy_url.new_url(),
                 }
                 logger.info("Apify proxy configured")
         
