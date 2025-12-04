@@ -30,12 +30,27 @@ class GoogleMapsScraper:
             'viewport': {'width': 1920, 'height': 1080},
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'locale': 'en-US',
+            'timezone_id': 'America/New_York',
+            'permissions': ['geolocation'],
+            'geolocation': {'latitude': 40.7128, 'longitude': -74.0060},  # New York coordinates
+            'extra_http_headers': {
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            }
         }
         
         if self.proxy_config:
             context_options['proxy'] = self.proxy_config
         
         self.context = await self.browser.new_context(**context_options)
+        
+        # Add initialization script to hide automation
+        await self.context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+        
         self.page = await self.context.new_page()
         self.parser = GoogleMapsParser(self.page)
         
@@ -49,7 +64,7 @@ class GoogleMapsScraper:
     
     async def search(self, query: str, location: str) -> bool:
         """
-        Perform search on Google Maps
+        Perform search on Google Maps using direct URL navigation
         
         Args:
             query: Search query (e.g., "coffee shops")
@@ -59,55 +74,47 @@ class GoogleMapsScraper:
             True if search successful, False otherwise
         """
         try:
-            # Navigate to Google Maps
-            logger.info(f"Navigating to Google Maps...")
-            await self.page.goto(GOOGLE_MAPS_URL, wait_until='domcontentloaded')
-            await random_delay(3, 5)  # Wait for page to fully load
-            
-            # Build search query (query + location)
+            # Build search query and construct direct URL
             search_text = f"{query} {location}".strip()
             logger.info(f"Searching for: {search_text}")
             
-            # Try multiple selectors for search input (Google Maps can vary)
-            search_input_selectors = [
-                'input#searchboxinput',
-                'input[aria-label*="Search"]',
-                'input[name="q"]',
-                'input[placeholder*="Search"]'
-            ]
+            # Use direct Google Maps search URL (more reliable than typing)
+            import urllib.parse
+            encoded_query = urllib.parse.quote(search_text)
+            search_url = f"https://www.google.com/maps/search/{encoded_query}"
             
-            search_input = None
-            for selector in search_input_selectors:
-                try:
-                    search_input = await self.page.wait_for_selector(
-                        selector, 
-                        timeout=5000,
-                        state='visible'
-                    )
-                    if search_input:
-                        logger.info(f"Found search input with selector: {selector}")
-                        break
-                except:
-                    continue
+            logger.info(f"Navigating directly to search URL...")
             
-            if not search_input:
-                logger.error("Could not find search input with any selector")
-                # Take a screenshot for debugging
-                await self.page.screenshot(path='/tmp/gmaps_error.png')
-                return False
+            # Navigate with increased timeout and without waiting for full networkidle
+            await self.page.goto(
+                search_url, 
+                wait_until='domcontentloaded',
+                timeout=60000  # 60 second timeout
+            )
             
-            await search_input.click()
-            await random_delay(0.5, 1)
-            await search_input.fill(search_text)
-            await random_delay(0.5, 1)
-            await search_input.press('Enter')
+            # Give it time to load the results
+            await random_delay(4, 6)
             
             # Wait for results to load
             logger.info("Waiting for search results...")
-            await self.page.wait_for_selector(
-                SELECTORS['results_container'], 
-                timeout=20000
-            )
+            try:
+                await self.page.wait_for_selector(
+                    SELECTORS['results_container'], 
+                    timeout=30000,
+                    state='visible'
+                )
+                logger.info("Results container found!")
+            except Exception as e:
+                logger.error(f"Results container not found: {e}")
+                # Take screenshot for debugging
+                try:
+                    await self.page.screenshot(path='/tmp/gmaps_no_results.png')
+                    page_content = await self.page.content()
+                    logger.info(f"Page title: {await self.page.title()}")
+                except:
+                    pass
+                return False
+            
             await random_delay(2, 3)
             
             # Check for no results
@@ -128,6 +135,7 @@ class GoogleMapsScraper:
             # Take a screenshot for debugging
             try:
                 await self.page.screenshot(path='/tmp/gmaps_error.png')
+                logger.info(f"Page URL: {self.page.url}")
             except:
                 pass
             return False
