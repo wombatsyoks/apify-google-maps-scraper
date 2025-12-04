@@ -277,7 +277,7 @@ class GoogleMapsScraper:
     
     async def deep_scrape_businesses(self, businesses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Click into each business to extract detailed information
+        Click into each business to extract detailed information (parallelized for speed)
         
         Args:
             businesses: List of basic business data
@@ -287,39 +287,79 @@ class GoogleMapsScraper:
         """
         detailed_businesses = []
         
-        for i, business in enumerate(businesses):
-            try:
-                url = business.get('url')
-                if not url:
-                    detailed_businesses.append(business)
-                    continue
-                
-                logger.info(f"Deep scraping {i+1}/{len(businesses)}: {business.get('title', 'Unknown')}")
-                
-                # Navigate to business page
-                await self.page.goto(url, wait_until='domcontentloaded', timeout=15000)
-                await random_delay(2, 3)
-                
-                # Extract detailed info
-                detailed_data = await self.parser.parse_business_details()
-                
-                # Merge with existing data (detailed data takes priority)
-                merged_data = {**business, **detailed_data}
-                detailed_businesses.append(merged_data)
-                
-                if (i + 1) % 5 == 0:
-                    logger.info(f"Deep scraped {i+1}/{len(businesses)} businesses...")
-                
-                # Small delay between businesses
-                await self.page.wait_for_timeout(500)
-                
-            except Exception as e:
-                logger.warning(f"Failed to deep scrape {business.get('title', 'Unknown')}: {e}")
-                # Keep the basic data if deep scrape fails
-                detailed_businesses.append(business)
+        # Process in batches for parallel scraping
+        batch_size = 10  # Scrape 10 businesses at once
+        total = len(businesses)
+        
+        for batch_start in range(0, total, batch_size):
+            batch_end = min(batch_start + batch_size, total)
+            batch = businesses[batch_start:batch_end]
+            
+            logger.info(f"Deep scraping batch {batch_start+1}-{batch_end} of {total}...")
+            
+            # Process batch in parallel
+            batch_results = await asyncio.gather(
+                *[self._deep_scrape_single(business, i + batch_start + 1, total) 
+                  for i, business in enumerate(batch)],
+                return_exceptions=True
+            )
+            
+            # Collect results
+            for i, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Failed to deep scrape {batch[i].get('title', 'Unknown')}: {result}")
+                    detailed_businesses.append(batch[i])  # Keep basic data
+                elif result:
+                    detailed_businesses.append(result)
+                else:
+                    detailed_businesses.append(batch[i])
         
         logger.info(f"Deep scraping completed for {len(detailed_businesses)} businesses")
         return detailed_businesses
+    
+    async def _deep_scrape_single(self, business: Dict[str, Any], index: int, total: int) -> Optional[Dict[str, Any]]:
+        """
+        Deep scrape a single business (helper for parallel processing)
+        """
+        try:
+            url = business.get('url')
+            if not url:
+                return business
+            
+            # Create a new browser context for this business (for parallelization)
+            context = await self.browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            )
+            
+            try:
+                page = await context.new_page()
+                
+                # Navigate to business page
+                await page.goto(url, wait_until='domcontentloaded', timeout=10000)
+                await page.wait_for_timeout(1000)
+                
+                # Create parser for this page
+                from parser import GoogleMapsParser
+                parser = GoogleMapsParser(page)
+                
+                # Extract detailed info
+                detailed_data = await parser.parse_business_details()
+                
+                # Merge with existing data
+                merged_data = {**business, **detailed_data}
+                
+                if index % 10 == 0:
+                    logger.info(f"Deep scraped {index}/{total} businesses...")
+                
+                return merged_data
+                
+            finally:
+                await context.close()
+                
+        except Exception as e:
+            logger.warning(f"Error deep scraping {business.get('title', 'Unknown')}: {e}")
+            return business
     
     async def scrape(
         self, 
