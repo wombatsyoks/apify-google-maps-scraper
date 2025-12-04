@@ -61,18 +61,40 @@ class GoogleMapsScraper:
         try:
             # Navigate to Google Maps
             logger.info(f"Navigating to Google Maps...")
-            await self.page.goto(GOOGLE_MAPS_URL, wait_until='networkidle')
-            await random_delay(2, 4)
+            await self.page.goto(GOOGLE_MAPS_URL, wait_until='domcontentloaded')
+            await random_delay(3, 5)  # Wait for page to fully load
             
             # Build search query (query + location)
             search_text = f"{query} {location}".strip()
             logger.info(f"Searching for: {search_text}")
             
-            # Find search input and enter query
-            search_input = await self.page.wait_for_selector(
-                SELECTORS['search_input'], 
-                timeout=10000
-            )
+            # Try multiple selectors for search input (Google Maps can vary)
+            search_input_selectors = [
+                'input#searchboxinput',
+                'input[aria-label*="Search"]',
+                'input[name="q"]',
+                'input[placeholder*="Search"]'
+            ]
+            
+            search_input = None
+            for selector in search_input_selectors:
+                try:
+                    search_input = await self.page.wait_for_selector(
+                        selector, 
+                        timeout=5000,
+                        state='visible'
+                    )
+                    if search_input:
+                        logger.info(f"Found search input with selector: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not search_input:
+                logger.error("Could not find search input with any selector")
+                # Take a screenshot for debugging
+                await self.page.screenshot(path='/tmp/gmaps_error.png')
+                return False
             
             await search_input.click()
             await random_delay(0.5, 1)
@@ -84,7 +106,7 @@ class GoogleMapsScraper:
             logger.info("Waiting for search results...")
             await self.page.wait_for_selector(
                 SELECTORS['results_container'], 
-                timeout=15000
+                timeout=20000
             )
             await random_delay(2, 3)
             
@@ -103,6 +125,11 @@ class GoogleMapsScraper:
             
         except Exception as e:
             logger.error(f"Error during search: {e}")
+            # Take a screenshot for debugging
+            try:
+                await self.page.screenshot(path='/tmp/gmaps_error.png')
+            except:
+                pass
             return False
     
     async def scroll_results(self, max_scrolls: int = 50) -> bool:
