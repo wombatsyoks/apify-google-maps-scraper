@@ -21,7 +21,7 @@ class GoogleMapsScraper:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.parser: Optional[GoogleMapsParser] = None
-        self.rate_limiter = RateLimiter(max_requests=50, time_window=60)
+        # Removed rate limiter for faster scraping
     
     async def initialize(self):
         """Initialize browser context and page"""
@@ -192,10 +192,10 @@ class GoogleMapsScraper:
             while scroll_count < max_scrolls:
                 # Scroll to bottom of container
                 await results_container.evaluate('el => el.scrollTo(0, el.scrollHeight)')
-                await random_delay()
+                await self.page.wait_for_timeout(500)  # Quick delay for scroll
                 
                 # Wait for content to load
-                await self.page.wait_for_timeout(1000)
+                await self.page.wait_for_timeout(500)  # Reduced from 1000ms
                 
                 # Check if new content loaded
                 new_height = await results_container.evaluate('el => el.scrollHeight')
@@ -249,8 +249,7 @@ class GoogleMapsScraper:
                     logger.info(f"Reached max results limit ({max_results})")
                     break
                 
-                # Rate limiting
-                await self.rate_limiter.wait_if_needed()
+                # No rate limiting for speed
                 
                 # Parse card
                 business = await self.parser.parse_business_card(card)
@@ -304,8 +303,8 @@ class GoogleMapsScraper:
                 return []
             
             # Scroll to load more results
-            # Calculate scrolls needed (roughly 10-15 results per scroll)
-            needed_scrolls = min(max_results // 10 + 5, 50)
+            # Calculate scrolls needed (roughly 5-10 results per scroll)
+            needed_scrolls = min(max_results // 5 + 10, 100)  # Increased to get more results
             await self.scroll_results(max_scrolls=needed_scrolls)
             
             # Extract business data
