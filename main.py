@@ -48,7 +48,9 @@ async def main():
         
         # Configure Apify proxy if enabled
         playwright_proxy = None
-        if proxy_config.get('useApifyProxy', True):
+        use_proxy = proxy_config.get('useApifyProxy', True)
+        
+        if use_proxy:
             proxy_url = await Actor.create_proxy_configuration()
             if proxy_url:
                 playwright_proxy = {
@@ -81,6 +83,21 @@ async def main():
                     max_results=max_results,
                     deep_scrape=deep_scrape
                 )
+                
+                # If no results and we used proxy, try again without proxy
+                if len(businesses) == 0 and playwright_proxy is not None:
+                    logger.warning("No results with proxy - Google may be blocking. Trying without proxy...")
+                    await scraper.close()
+                    
+                    # Retry without proxy
+                    scraper = GoogleMapsScraper(browser, proxy_config=None)
+                    businesses = await scraper.scrape(
+                        query=search_query,
+                        location=location,
+                        max_results=max_results,
+                        deep_scrape=deep_scrape
+                    )
+                
                 
                 # Add scraping metadata
                 scraped_at = datetime.utcnow().isoformat() + 'Z'
